@@ -66,6 +66,10 @@ type memberJSON struct {
 	// what a rule may send it: the tokens it takes, when known, and images
 	Context int  `json:"context,omitempty"`
 	Images  bool `json:"images,omitempty"`
+	// ImageSet: magpie has an answer for its images either way, rather than
+	// nothing known of it — which counts text-only (gateway.blindTo), and is
+	// shown as unknown rather than as "text only"
+	ImageSet bool `json:"imageSet,omitempty"`
 }
 
 type modelRef struct {
@@ -81,6 +85,12 @@ type modelRef struct {
 	// CanFast: a group's member of it may be sent in its vendor's fast
 	// mode (provider.CanFast)
 	CanFast bool `json:"canFast,omitempty"`
+	// Images: agents are told it takes images (provider.Entry.Images); a
+	// group's editor says of each member what it says of it (#756).
+	// ImageSet: magpie has an answer for it either way, rather than nothing
+	// known of it (imagesSaid)
+	Images   bool `json:"images,omitempty"`
+	ImageSet bool `json:"imageSet,omitempty"`
 }
 
 type poolJSON struct {
@@ -96,6 +106,16 @@ type poolJSON struct {
 	// made for more than one — each protocol's keys are a pool of their own
 	Protocol provider.Protocol `json:"protocol,omitempty"`
 }
+
+// seesImages is whether agents are told the model takes images: its list
+// says so, and nothing said otherwise (provider.Entry).
+func seesImages(e provider.Entry) bool { return e.Images && (e.ImageInput == nil || *e.ImageInput) }
+
+// imagesSaid is whether magpie has an answer for the model's images either
+// way — its list said so, or what magpie reads of it says it sees. With
+// neither, it counts text-only (gateway.blindTo) but the page says unknown,
+// rather than calling a model text-only that was never asked.
+func imagesSaid(e provider.Entry) bool { return e.ImageInput != nil || e.Images }
 
 // onOf is who a provider's requests spread over: its accounts, or keys.
 func onOf(p provider.Provider) (kind string, who []string) {
@@ -149,7 +169,7 @@ func groupsState() groupsJSON {
 	served := provider.Served()
 	for _, e := range served {
 		if e.Group == "" {
-			out.Models = append(out.Models, modelRef{ID: e.ID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon, Context: e.Context, Efforts: e.Efforts, CanFast: provider.CanFast(e.Provider, e.Model)})
+			out.Models = append(out.Models, modelRef{ID: e.ID, Name: e.Name, Provider: e.Provider.ID, PName: e.Provider.Name, Icon: e.Provider.Icon, Context: e.Context, Efforts: e.Efforts, CanFast: provider.CanFast(e.Provider, e.Model), Images: seesImages(e), ImageSet: imagesSaid(e)})
 		}
 	}
 	for _, g := range provider.Groups() {
@@ -179,7 +199,7 @@ func groupsState() groupsJSON {
 					if e.ID == id {
 						_, ms, _ := provider.FindGroup(id)
 						m.Ready, m.Name, m.Icon, m.On = true, e.Name, e.Provider.Icon, len(ms)
-						m.Context, m.Images = e.Context, e.Images && (e.ImageInput == nil || *e.ImageInput)
+						m.Context, m.Images, m.ImageSet = e.Context, seesImages(e), imagesSaid(e)
 						gj.Ready = true
 						break
 					}
@@ -199,7 +219,7 @@ func groupsState() groupsJSON {
 				m.Fast = m.CanFast && g.IsFast(id)
 				for _, e := range served {
 					if e.Group == "" && e.Provider.ID == p.ID && e.Model == model {
-						m.Context, m.Images = e.Context, e.Images && (e.ImageInput == nil || *e.ImageInput)
+						m.Context, m.Images, m.ImageSet = e.Context, seesImages(e), imagesSaid(e)
 						break
 					}
 				}
