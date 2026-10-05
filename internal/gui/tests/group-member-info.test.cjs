@@ -15,17 +15,23 @@ const { test } = require("node:test");
 const { chromium, webkit } = require("playwright");
 
 const assets = path.resolve(__dirname, "../assets");
-// three members: one that sees images, one whose list says it takes none, and
-// one whose list says nothing either way
+// three members, written as groupsState() emits them: one that sees images,
+// one whose list says it takes none, and one nothing was read of. `images` is
+// omitempty, so a model that doesn't take them carries no images key at all;
+// only a model nothing was read of carries imagesUnknown, and it is sent only
+// when true — which is what the page reads as unknown.
 const models = [
-  { id: "p/eye", name: "Eye", providerName: "P", icon: "generic", context: 1048576, efforts: ["low", "medium", "high"], images: true, imageSet: true },
-  { id: "p/text", name: "Text", providerName: "P", icon: "generic", context: 200000, images: false, imageSet: true },
-  { id: "p/mystery", name: "Mystery", providerName: "P", icon: "generic", context: 128000, images: false, imageSet: false },
+  { id: "p/eye", name: "Eye", providerName: "P", icon: "generic", context: 1048576, efforts: ["low", "medium", "high"], images: true },
+  { id: "p/text", name: "Text", providerName: "P", icon: "generic", context: 200000 },
+  { id: "p/mystery", name: "Mystery", providerName: "P", icon: "generic", context: 128000, imagesUnknown: true },
 ];
 const group = {
   id: "g", name: "Mixed", routing: "", ready: true,
   members: models.map((m) => m.id),
-  memberInfo: models.map((m) => ({ id: m.id, ready: true, name: m.name, provider: "p", model: m.id, icon: "generic", context: m.context, images: m.images })),
+  memberInfo: models.map((m) => ({
+    id: m.id, ready: true, name: m.name, provider: "p", model: m.id, icon: "generic", context: m.context,
+    ...(m.images ? { images: true } : {}), ...(m.imagesUnknown ? { imagesUnknown: true } : {}),
+  })),
 };
 
 const words = {

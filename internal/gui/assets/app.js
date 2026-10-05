@@ -5391,8 +5391,9 @@ function modelInfo(m) {
   } else lines.push(t("Reasoning levels: none known"));
   // nothing read of its images either way: magpie counts it text-only for a
   // describer (gateway.blindTo), which is not the same as its list saying so,
-  // so it is not called text-only here either
-  const imgUnknown = m.imageSet === false;
+  // so it is not called text-only here either. Only a model that carries the
+  // flag is unknown; one magpie has an answer for carries no such key at all.
+  const imgUnknown = m.imagesUnknown === true;
   if (m.images) {
     const c = el("span", "badge mi-img");
     c.append(svg(IMAGE_GLYPH, 11, 1.4));

@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -52,21 +53,21 @@ func TestGroupModelsCarryWhatTheyTake(t *testing.T) {
 	for _, tc := range []struct {
 		id      string
 		images  bool
-		said    bool
+		unknown bool
 		context int
 		efforts int
 	}{
-		{"p/eye", true, true, 1048576, 3},      // its list says it sees
-		{"p/text", false, true, 200000, 0},     // its list says it takes none
-		{"p/mystery", false, false, 128000, 0}, // nothing was read of it either way
-		{"p/mine", true, true, 64000, 0},       // the user's answer, over its list
+		{"p/eye", true, false, 1048576, 3},    // its list says it sees
+		{"p/text", false, false, 200000, 0},   // its list says it takes none
+		{"p/mystery", false, true, 128000, 0}, // nothing was read of it either way
+		{"p/mine", true, false, 64000, 0},     // the user's answer, over its list
 	} {
 		m, ok := byID[tc.id]
 		if !ok {
 			t.Fatalf("%s is not in the group's models", tc.id)
 		}
-		if m.Images != tc.images || m.ImageSet != tc.said {
-			t.Errorf("%s: images %v said %v, want %v %v", tc.id, m.Images, m.ImageSet, tc.images, tc.said)
+		if m.Images != tc.images || m.ImagesUnknown != tc.unknown {
+			t.Errorf("%s: images %v unknown %v, want %v %v", tc.id, m.Images, m.ImagesUnknown, tc.images, tc.unknown)
 		}
 		if m.Context != tc.context {
 			t.Errorf("%s: context %d, want %d", tc.id, m.Context, tc.context)
@@ -87,12 +88,87 @@ func TestGroupModelsCarryWhatTheyTake(t *testing.T) {
 		t.Fatalf("the group lists %d members", len(g.Info))
 	}
 	for i, want := range []struct {
-		id     string
-		images bool
-		said   bool
-	}{{"p/eye", true, true}, {"p/text", false, true}, {"p/mystery", false, false}, {"p/mine", true, true}} {
-		if g.Info[i].ID != want.id || g.Info[i].Images != want.images || g.Info[i].ImageSet != want.said {
-			t.Errorf("member %d is %s images %v said %v, want %s %v %v", i, g.Info[i].ID, g.Info[i].Images, g.Info[i].ImageSet, want.id, want.images, want.said)
+		id      string
+		images  bool
+		unknown bool
+	}{{"p/eye", true, false}, {"p/text", false, false}, {"p/mystery", false, true}, {"p/mine", true, false}} {
+		if g.Info[i].ID != want.id || g.Info[i].Images != want.images || g.Info[i].ImagesUnknown != want.unknown {
+			t.Errorf("member %d is %s images %v unknown %v, want %s %v %v", i, g.Info[i].ID, g.Info[i].Images, g.Info[i].ImagesUnknown, want.id, want.images, want.unknown)
+		}
+	}
+}
+
+// The page reads a member's images off the wire: a model magpie has an answer
+// for carries no imagesUnknown key at all (and `images` is omitempty, so a
+// model that takes none carries no images key either), while one nothing was
+// read of carries imagesUnknown: true. What the browser test's fixture writes
+// is this shape, not one of its own.
+func TestGroupModelImagesOnTheWire(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	yes, no := true, false
+	if err := provider.Save(provider.Provider{ID: "p", Name: "P", Key: "k", Chat: "http://127.0.0.1:1/v1",
+		Models: []string{"eye", "text", "mystery"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := catalog.SaveLive("p", "http://127.0.0.1:1/v1", []catalog.Model{
+		{ID: "eye", Images: true, ImageInput: &yes},
+		{ID: "text", ImageInput: &no},
+		{ID: "mystery"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SaveGroup(provider.Group{ID: "g", Name: "G", Members: []string{"p/eye", "p/text", "p/mystery"}}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(groupsState())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Models []map[string]any `json:"models"`
+		Groups []struct {
+			Info []map[string]any `json:"memberInfo"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	keys := func(m map[string]any) (images, unknown any) { return m["images"], m["imagesUnknown"] }
+	byID := map[string]map[string]any{}
+	for _, m := range doc.Models {
+		byID[m["id"].(string)] = m
+	}
+	for _, tc := range []struct {
+		id      string
+		images  bool
+		unknown bool
+	}{
+		{"p/eye", true, false},
+		{"p/text", false, false},
+		{"p/mystery", false, true},
+	} {
+		m, ok := byID[tc.id]
+		if !ok {
+			t.Fatalf("%s is not in the models", tc.id)
+		}
+		img, unk := keys(m)
+		if img != nil && img != tc.images || (img == nil) == tc.images {
+			t.Errorf("%s: images on the wire is %v, want %v (a false is left out)", tc.id, img, tc.images)
+		}
+		if unk != nil && unk != tc.unknown || (unk == nil) == tc.unknown {
+			t.Errorf("%s: imagesUnknown on the wire is %v, want %v (only true is sent)", tc.id, unk, tc.unknown)
+		}
+	}
+	// the same for a group's own members
+	for _, m := range doc.Groups[0].Info {
+		want := byID[m["id"].(string)]
+		img, unk := keys(m)
+		wantImg, wantUnk := keys(want)
+		if (img == nil) != (wantImg == nil) || img != wantImg || (unk == nil) != (wantUnk == nil) || unk != wantUnk {
+			t.Errorf("member %v carries images %v unknown %v, the model carries %v %v", m["id"], img, unk, wantImg, wantUnk)
 		}
 	}
 }
