@@ -126,11 +126,17 @@ func pluginsState(ctx context.Context, w Windows) pluginsJSON {
 		for _, p := range loaded {
 			errs[p.Spec] = p.Error
 		}
-		if ps, err := plugin.Providers(ctx); err == nil {
-			for _, p := range ps {
-				names[p.Spec] = append(names[p.Spec], p.Name)
-			}
-		}
+	}
+	// each plugin's subscriptions, by the names it gave last (plugin.Cached,
+	// which holds them without starting the host or asking anyone, and asks
+	// the plugins again in the background when a sign-in or the plugins
+	// changed since). Asking here — plugin.Providers — walks the plugins one
+	// at a time and has each fetch its vendor's model list over the network,
+	// which is the whole of the providers RPC; the page here uses none of
+	// those models, only the names, so waiting on them held the Installed
+	// list for one vendor after another every time it was opened.
+	for _, p := range plugin.Cached() {
+		names[p.Spec] = append(names[p.Spec], p.Name)
 	}
 	// npm's newest, as it said last: asking it again is /api/plugins/npm's
 	known := plugin.InfoCached(npmNames(l.Plugins))

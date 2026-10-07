@@ -817,7 +817,10 @@
       }
     } else if (mw && !e.providers.length) {
       // only middleware: its own line says what it does
-    } else sub.textContent = e.providers.length ? t("Signs in to {names}", { names: e.providers.join(t(", ")) }) : t("Signs in to nothing magpie can use");
+    } else if (e.providers.length) sub.textContent = t("Signs in to {names}", { names: e.providers.join(t(", ")) });
+    // a plugin installed a moment ago has no names yet: the page says what
+    // its provider is on the next read rather than claiming here that it
+    // signs in to nothing magpie can use, which is not known until it is asked
     if (sub.textContent) who.append(sub);
     if (mw && !e.off && !ask) who.append(mwLine(mw));
     if (mw && !e.off && !ask && editing?.pkg === pkg) who.append(optionsEditor(e));

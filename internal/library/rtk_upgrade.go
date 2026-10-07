@@ -41,10 +41,13 @@ var rtkLatest struct {
 	next time.Time
 }
 
-// CheckLatest fills in rtk's latest release (see RTKLatest) and, when it
-// is newer than this rtk, whether the package manager that installed it has
-// it yet (Waiting): winget and Homebrew take days to have a release GitHub
-// has, and until they do an upgrade through them changes nothing (#1025).
+// CheckLatest fills in rtk's latest release (see RTKLatest), and, when it is
+// newer than this rtk, what the package manager that installed it has — but
+// only what that said before, and within its own age (Waiting): asking a
+// package manager is slow (`winget show` refreshes its sources — seconds, on a
+// slow or unreachable network far more), and a read that waits for it holds up
+// the whole tab for a grey tag beside the version. CheckChannel asks in the
+// background instead, and the next read draws with its answer.
 func (v *RTKView) CheckLatest() {
 	if v.Path == "" {
 		return
@@ -58,9 +61,25 @@ func (v *RTKView) CheckLatest() {
 	if ch == "" {
 		return
 	}
-	// what it has, when it said: not knowing leaves Upgrade offered
-	if has := rtkChannelLatest(c); has != "" && !newer(has, v.Version) {
+	// what it said last: not knowing leaves Upgrade offered, which is what a
+	// page drawn before that answer arrives shows
+	if has, ok := rtkChannelCached(c); ok && has != "" && !newer(has, v.Version) {
 		v.Waiting, v.WaitingHas = ch, has
+	}
+}
+
+// CheckChannel asks the package manager upgrade runs what rtk it has, and
+// keeps the answer for six hours (see rtkChannelLatest), so that the next read
+// of the tab draws with it without waiting. It is asked in the background,
+// after the tab has gone out: it is a question for the package manager, which
+// takes seconds, and it answers nothing anyone needs unless a release newer
+// than the one installed is out (#1025).
+func CheckChannel(v *RTKView) {
+	if v.Path == "" || v.Latest == "" || v.Version == "" || !newer(v.Latest, v.Version) {
+		return
+	}
+	if c := upgraderOf(v.Path); rtkChannelName(c) != "" {
+		rtkChannelLatest(c)
 	}
 }
 
@@ -97,9 +116,23 @@ type rtkChannel struct {
 	next time.Time
 }
 
+// rtkChannelCached is what the package manager said last, and whether it was
+// said within its own age, without asking it again. It is what a read that must
+// not wait draws with (see RTKView.CheckLatest).
+func rtkChannelCached(c []string) (string, bool) {
+	rtkChannels.Lock()
+	defer rtkChannels.Unlock()
+	e, ok := rtkChannels.m[c[0]]
+	if !ok || !time.Now().Before(e.next) {
+		return "", false
+	}
+	return e.v, true
+}
+
 // rtkChannelLatest is the newest rtk the package manager upgrade c runs
-// has, "" when it didn't say.
-func rtkChannelLatest(c []string) string {
+// has, "" when it didn't say. It is a var so tests can count the asks (see
+// TestCheckLatestNeverAsksThePackageManager).
+var rtkChannelLatest = func(c []string) string {
 	rtkChannels.Lock()
 	defer rtkChannels.Unlock()
 	if e, ok := rtkChannels.m[c[0]]; ok && time.Now().Before(e.next) {

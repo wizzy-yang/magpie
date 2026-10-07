@@ -232,8 +232,14 @@ esac
 		return []string{"winget", "upgrade", "--id", "rtk-ai.rtk", "--exact", "--silent", "--accept-package-agreements", "--accept-source-agreements", "--disable-interactivity"}
 	}
 	t.Cleanup(func() { upgraderOf = up })
+	// what the tab does with the read it draws: it takes what the package
+	// manager said last, and asks it in the background for the next time
+	// (asking it takes seconds — `winget show` refreshes its sources — which
+	// is what #1025's note must not hold the tab up for)
 	card := func() map[string]any {
 		v := ReadRTK()
+		v.CheckLatest()
+		CheckChannel(v)
 		v.CheckLatest()
 		return asJSON(t, v)
 	}
