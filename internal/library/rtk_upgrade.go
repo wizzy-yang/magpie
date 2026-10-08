@@ -105,11 +105,15 @@ func rtkChannelName(c []string) string {
 
 // rtkChannels is the newest rtk each package manager has, as last asked or
 // as an upgrade through it left: good for six hours, a failure (not known)
-// for fifteen minutes.
+// for fifteen minutes. asking marks a package manager being asked right now:
+// the ask runs outside the lock, which is held only to read and write this
+// (its own subprocess takes seconds, and a reader that waited for it would
+// hold up the tab: #1025, the tag beside the version).
 var rtkChannels = struct {
 	sync.Mutex
-	m map[string]rtkChannel
-}{m: map[string]rtkChannel{}}
+	m      map[string]rtkChannel
+	asking map[string]bool
+}{m: map[string]rtkChannel{}, asking: map[string]bool{}}
 
 type rtkChannel struct {
 	v    string
@@ -132,18 +136,39 @@ func rtkChannelCached(c []string) (string, bool) {
 // rtkChannelLatest is the newest rtk the package manager upgrade c runs
 // has, "" when it didn't say. It is a var so tests can count the asks (see
 // TestCheckLatestNeverAsksThePackageManager).
+//
+// What the package manager said last is given back without asking it again,
+// and the ask itself runs with the lock let go: `winget show` refreshes its
+// sources and takes seconds, and a reader that only wants what is known
+// (rtkChannelCached, which draws the card) must not queue behind it. An ask
+// already in flight for the same manager is not started twice; it answers
+// with what that one said last, or "" while nothing has been said.
 var rtkChannelLatest = func(c []string) string {
 	rtkChannels.Lock()
-	defer rtkChannels.Unlock()
 	if e, ok := rtkChannels.m[c[0]]; ok && time.Now().Before(e.next) {
-		return e.v
+		v := e.v
+		rtkChannels.Unlock()
+		return v
 	}
-	v, err := askRTKChannel(c)
+	if rtkChannels.asking[c[0]] {
+		v := rtkChannels.m[c[0]].v
+		rtkChannels.Unlock()
+		return v
+	}
+	rtkChannels.asking[c[0]] = true
+	rtkChannels.Unlock()
+
+	v, err := askRTKChannelNow(c)
+
+	rtkChannels.Lock()
+	delete(rtkChannels.asking, c[0])
 	if err != nil {
 		rtkChannels.m[c[0]] = rtkChannel{next: time.Now().Add(15 * time.Minute)}
+		rtkChannels.Unlock()
 		return ""
 	}
 	rtkChannels.m[c[0]] = rtkChannel{v: v, next: time.Now().Add(6 * time.Hour)}
+	rtkChannels.Unlock()
 	return v
 }
 
@@ -157,6 +182,11 @@ func rtkChannelHas(c []string, v string) {
 	rtkChannels.m[c[0]] = rtkChannel{v: v, next: time.Now().Add(6 * time.Hour)}
 	rtkChannels.Unlock()
 }
+
+// askRTKChannelNow is askRTKChannel as the ask runs: a var so a test can make
+// it slow without a package manager to run, on any platform (see
+// TestRTKReadWhileThePackageManagerIsBeingAsked).
+var askRTKChannelNow = askRTKChannel
 
 // askRTKChannel asks Homebrew (as it last updated itself, as the Agents
 // page's update does) or winget (its source, as winget upgrade would) for

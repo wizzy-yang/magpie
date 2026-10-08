@@ -22,6 +22,99 @@ import (
 	"github.com/yetone/magpie/internal/testenv"
 )
 
+// forgetChannels clears what each package manager was found to have, and any
+// ask still marked in flight, so one test's answer is not another's.
+func forgetChannels() {
+	rtkChannels.Lock()
+	clear(rtkChannels.m)
+	clear(rtkChannels.asking)
+	rtkChannels.Unlock()
+}
+
+// A read that draws the card must not queue behind an ask already in flight.
+// `winget show` refreshes its sources and takes seconds; the ask holds no
+// lock while it runs, and what was said last is what a reader gets meanwhile
+// (#1025: the grey tag, or Upgrade offered). The ask is made slow here
+// without a package manager, so this holds on every platform.
+func TestRTKReadWhileThePackageManagerIsBeingAsked(t *testing.T) {
+	forgetChannels()
+	t.Cleanup(forgetChannels)
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	asked := 0
+	ask := askRTKChannelNow
+	askRTKChannelNow = func(c []string) (string, error) {
+		asked++
+		close(started)
+		<-release
+		return "0.50.0", nil
+	}
+	t.Cleanup(func() { askRTKChannelNow = ask })
+
+	c := []string{"winget", "show", "--id", "rtk-ai.rtk", "--exact"}
+	done := make(chan struct{})
+	go func() { rtkChannelLatest(c); close(done) }()
+	<-started
+	// whatever happens, the ask is let go: a read that waits must fail this
+	// test rather than hang it
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+		<-done
+	})
+
+	// what a read that only wants what is known gets: nothing yet, and not
+	// one second of waiting for the package manager. Run apart so a read that
+	// does wait fails here instead of holding up the whole test.
+	type read struct {
+		v  string
+		ok bool
+	}
+	reads := make(chan read, 1)
+	go func() { v, ok := rtkChannelCached(c); reads <- read{v, ok} }()
+	select {
+	case r := <-reads:
+		if r.ok || r.v != "" {
+			t.Errorf("cached = %q (kept: %v) before anything was said, want nothing", r.v, r.ok)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a read of what is known waited for an ask in flight: the ask must hold no lock")
+	}
+
+	// and a second ask for the same manager does not start another
+	seconds := make(chan string, 1)
+	go func() { seconds <- rtkChannelLatest(c) }()
+	select {
+	case again := <-seconds:
+		if again != "" {
+			t.Errorf("a second ask answered %q while the first was in flight, want nothing new", again)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a second ask for the same manager waited while the first was in flight")
+	}
+	if asked != 1 {
+		t.Errorf("the package manager was asked %d times while one ask was in flight, want 1", asked)
+	}
+
+	close(release)
+	<-done
+	// what it said is kept for the next read
+	if has, ok := rtkChannelCached(c); !ok || has != "0.50.0" {
+		t.Fatalf("what the package manager said = %q (kept: %v), want 0.50.0", has, ok)
+	}
+	// the in-flight mark is cleared, so a later ask goes out again
+	rtkChannels.Lock()
+	asking := rtkChannels.asking["winget"]
+	rtkChannels.Unlock()
+	if asking {
+		t.Error("the manager is still marked as being asked after the ask ended")
+	}
+}
+
 func TestRTKCheckLatestDoesNotWaitForThePackageManager(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fakes are shell scripts")

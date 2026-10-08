@@ -25,6 +25,13 @@ func TestReadRTKDetectsTheAgentsOnce(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	// an empty PATH, as the other tests here do: this read must not find the
+	// rtk installed on the machine running the test. ReadRTK runs `rtk gain`
+	// and `rtk --version` on one it finds, and rtk writes its own history
+	// (rtk/history.db) under the working directory — a test would leave that
+	// behind, and would be reading the real machine besides (see
+	// docs/code-standards.md: Tests stay out of the real machine).
+	t.Setenv("PATH", "")
 	// agents that are here, so both passes have something to look at
 	for _, d := range []string{".claude", ".codex", ".gemini", ".config/opencode", ".dsh"} {
 		if err := os.MkdirAll(filepath.Join(home, filepath.FromSlash(d)), 0o700); err != nil {
@@ -55,6 +62,9 @@ func TestSetRTKDetectsTheAgentsOnce(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, "cache"))
+	// no rtk on the PATH, so this is the read that says there is none — and
+	// so the machine running the test is not read either
+	t.Setenv("PATH", "")
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
 		t.Fatal(err)
 	}

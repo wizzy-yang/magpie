@@ -42,12 +42,8 @@ func latestServer(t *testing.T, tag string) {
 	t.Cleanup(forgetChannels)
 }
 
-// forgetChannels forgets what winget and Homebrew were found to have.
-func forgetChannels() {
-	rtkChannels.Lock()
-	clear(rtkChannels.m)
-	rtkChannels.Unlock()
-}
+// forgetChannels is in rtk_channel_background_test.go: it clears the answers
+// and any ask marked in flight.
 
 // asJSON is the view as the page gets it.
 func asJSON(t *testing.T, v *RTKView) map[string]any {
