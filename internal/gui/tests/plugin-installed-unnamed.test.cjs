@@ -4,10 +4,10 @@
 // them, which a plugin installed since hasn't been asked about yet, and asking
 // them means every plugin's vendor answering, one at a time.
 //
-// So the row once said "Signs in to nothing magpie can use" for a plugin that
-// does sign in to something — a claim the page had no way of knowing, said for
-// as long as the answer took to come. It says nothing instead, and the line is
-// there once the names have come. No backend here: the API is faked.
+// So an empty list is two different things: "not asked yet" — the row says
+// nothing rather than claiming a plugin that does sign in to something signs in
+// to nothing — and "asked, and it has none" (`named`), where the row says so.
+// No backend here: the API is faked.
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -17,6 +17,7 @@ const { chromium, webkit } = require("playwright");
 const assets = path.resolve(__dirname, "../assets");
 const HOME = "/Users/aimer";
 const NEW = "opencode-brandnew-auth";
+const EMPTY = "opencode-nothing-auth";
 const OLD = "opencode-copilot-auth";
 const claude = { id: "claude", name: "Claude Code", icon: "", skills: `${HOME}/.claude/skills`, mcp: `${HOME}/.claude/mcp.json` };
 const lib = {
@@ -61,12 +62,17 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
       await t.test(lang, async () => {
         const w = words[lang];
         const state = {
-          // the plugin installed a moment ago: it is in the list, and the
-          // providers answer names nothing for it yet
+          // NEW was installed a moment ago, and the answer for it has not
+          // come: its row must claim nothing. EMPTY has been asked about and
+          // has none (`named`), so its row says so.
           plugins: {
             plugins: [
-              { spec: OLD, providers: ["GitHub Copilot"], version: "0.1.0", moved: [] },
+              { spec: OLD, providers: ["GitHub Copilot"], named: true, version: "0.1.0", moved: [] },
+              // the not-asked row carries no `named` at all: the backend's
+              // pluginEntryJSON is `named,omitempty`, so a false one is left
+              // off the wire rather than sent as false
               { spec: NEW, providers: [], version: "0.1.0", moved: [] },
+              { spec: EMPTY, providers: [], named: true, version: "0.1.0", moved: [] },
             ],
             bun: true, bunVersion: "1.3.0", picker: false, mirror: false,
           },
@@ -83,11 +89,14 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const v = page.locator("#view-plugins");
         await v.locator(".pm-row", { hasText: NEW }).waitFor();
 
-        const body = await v.innerText();
-        assert(!body.includes(w.nothing), "no row claims a plugin signs in to nothing:\n" + body);
+        const notYet = await v.locator(".pm-row", { hasText: NEW }).innerText();
+        assert(!notYet.includes(w.nothing), "a plugin not asked about yet claims nothing:\n" + notYet);
         // the one whose names have come still says what it signs in to
         const old = v.locator(".pm-row", { hasText: OLD });
         assert((await old.innerText()).includes(w.signsIn), "the known plugin still names its subscriptions:\n" + (await old.innerText()));
+        // one that has been asked about and has none says so
+        const empty = await v.locator(".pm-row", { hasText: EMPTY }).innerText();
+        assert(empty.includes(w.nothing), "a plugin asked about with no subscriptions says so:\n" + empty);
         await ctx.close();
       });
     }

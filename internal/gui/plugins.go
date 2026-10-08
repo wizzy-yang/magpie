@@ -84,6 +84,10 @@ type pluginEntryJSON struct {
 	// rather than the host: its hooks, how often they ran and how long
 	// they took, and why it didn't load
 	Middleware *middleware.State `json:"middleware,omitempty"`
+	// Named is whether Providers is the plugins' own answer, rather than an
+	// empty list kept from before they were last asked: only then can the
+	// row say a plugin signs in to nothing (#1112)
+	Named bool `json:"named,omitempty"`
 	// OptionsExample is what its package suggests for its options, which
 	// the options editor starts from when none are set
 	OptionsExample map[string]any `json:"optionsExample,omitempty"`
@@ -138,11 +142,14 @@ func pluginsState(ctx context.Context, w Windows) pluginsJSON {
 	for _, p := range plugin.Cached() {
 		names[p.Spec] = append(names[p.Spec], p.Name)
 	}
+	// whether that is the plugins' own answer or what was kept from before
+	// they were last asked: an empty list means "none" only in the first case
+	answered := plugin.Answered()
 	// npm's newest, as it said last: asking it again is /api/plugins/npm's
 	known := plugin.InfoCached(npmNames(l.Plugins))
 	mws := middleware.States()
 	for _, e := range l.Plugins {
-		j := pluginEntryJSON{Entry: e, Error: errs[e.Spec], Providers: names[e.Spec], Version: plugin.Installed(e.Spec)}
+		j := pluginEntryJSON{Entry: e, Error: errs[e.Spec], Providers: names[e.Spec], Version: plugin.Installed(e.Spec), Named: answered}
 		if npmPlugin(e.Spec) {
 			j.Latest = known[plugin.Name(e.Spec)].Version
 		}

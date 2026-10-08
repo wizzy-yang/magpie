@@ -62,10 +62,11 @@ func TestPluginsStateNamesWithoutAsking(t *testing.T) {
 	s := pluginsState(ctx, nil)
 
 	var got []string
+	named := false
 	found := false
 	for _, e := range s.Plugins {
 		if e.Spec == spec {
-			got, found = e.Providers, true
+			got, found, named = e.Providers, true, e.Named
 		}
 	}
 	if !found {
@@ -74,4 +75,29 @@ func TestPluginsStateNamesWithoutAsking(t *testing.T) {
 	if len(got) != 1 || got[0] != "GitHub Copilot" {
 		t.Fatalf("the row's subscriptions = %v, want [GitHub Copilot]", got)
 	}
+	// what was kept is the plugins' own answer, so a row with no names may
+	// say it signs in to nothing (#1112)
+	if !named {
+		t.Error("Named = false with the plugins' own answer in hand, want true")
+	}
+
+	// and once what was kept is forgotten (a sign-in, or the plugins changed),
+	// an empty list is not the plugins' answer: the page must not claim a
+	// plugin signs in to nothing while nothing is known
+	plugin.UseCached(nil)
+	if named := namedFor(t, spec); named {
+		t.Error("Named = true with nothing asked yet, want false: an empty list is not the plugins' answer")
+	}
+}
+
+// namedFor is the Named flag the page gets for spec.
+func namedFor(t *testing.T, spec string) bool {
+	t.Helper()
+	for _, e := range pluginsState(context.Background(), nil).Plugins {
+		if e.Spec == spec {
+			return e.Named
+		}
+	}
+	t.Fatalf("%s isn't in the list", spec)
+	return false
 }
